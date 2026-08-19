@@ -528,13 +528,11 @@ class DatabaseManager {
       .select('*');
 
     const summaries = await Promise.all((members || []).map(async (m: any) => {
-      // Find latest session
+      // Get ALL sessions for this user
       const { data: userSessions } = await supabase
         .from('sessions')
         .select('*')
-        .eq('user_id', m.user_id)
-        .order('end_time', { ascending: false })
-        .limit(1);
+        .eq('user_id', m.user_id);
       
       let lastActive = m.joined_server_at ? new Date(m.joined_server_at).getTime() : (now.getTime() - 30 * 86400000);
       let totalVoice = 0;
@@ -542,14 +540,15 @@ class DatabaseManager {
       let totalStream = 0;
 
       if (userSessions && userSessions.length > 0) {
-        const session = userSessions[0];
-        if (session.end_time) {
-          const endTime = new Date(session.end_time).getTime();
-          if (endTime > lastActive) lastActive = endTime;
-        }
-        if (session.activity_type === 'voice') totalVoice += session.duration_seconds;
-        if (session.activity_type === 'video') totalVideo += session.duration_seconds;
-        if (session.activity_type === 'stream') totalStream += session.duration_seconds;
+        userSessions.forEach((session: any) => {
+          if (session.end_time) {
+            const endTime = new Date(session.end_time).getTime();
+            if (endTime > lastActive) lastActive = endTime;
+          }
+          if (session.activity_type === 'voice') totalVoice += session.duration_seconds;
+          if (session.activity_type === 'video') totalVideo += session.duration_seconds;
+          if (session.activity_type === 'stream') totalStream += session.duration_seconds;
+        });
       }
 
       const isActiveNow = activeUserIds.has(m.user_id);

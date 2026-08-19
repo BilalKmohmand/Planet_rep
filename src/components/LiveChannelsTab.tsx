@@ -240,7 +240,7 @@ export const LiveChannelsTab: React.FC<LiveChannelsTabProps> = ({
                                 @{member.username}
                               </span>
                               <span className="text-[10px] text-zinc-500 block font-mono">
-                                ⏱️ {formatElapsed(member.voiceStartTime)}
+                                ⏱️ {member.isStreaming && member.streamStartTime ? formatElapsed(member.streamStartTime) : member.isVideo && member.videoStartTime ? formatElapsed(member.videoStartTime) : formatElapsed(member.voiceStartTime)}
                               </span>
                             </div>
                           </div>
