@@ -1,0 +1,6 @@
+{
+  "name": "Discord Voice & Stream Tracker Bot",
+  "description": "Real-time Discord voice, video call, and screen share activity tracking bot with session analytics, database logging, slash commands, and dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
