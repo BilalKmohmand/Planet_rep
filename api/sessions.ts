@@ -1,7 +1,6 @@
-import { getSessionHistory } from './_db.js';
-
 export default async function handler(req: any, res: any) {
   try {
+    const { getSessionHistory } = await import('./_db.js');
     const { userId, channelId, activityType, limit, offset } = req.query;
 
     const result = await getSessionHistory({
@@ -14,6 +13,9 @@ export default async function handler(req: any, res: any) {
 
     res.status(200).json(result);
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || 'Failed to load sessions' });
+    res.status(500).json({
+      error: e?.message || 'Failed to load sessions',
+      stack: e?.stack,
+    });
   }
 }
