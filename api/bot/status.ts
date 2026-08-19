@@ -1,8 +1,7 @@
-import { db } from '../../server/db';
-
 export default async function handler(req: any, res: any) {
   try {
-    const overview = await db.getOverviewAnalytics();
+    const { getOverviewAnalytics } = await import('../_db.js');
+    const overview = await getOverviewAnalytics();
     res.status(200).json({
       mode: 'serverless',
       discordConnected: false,
@@ -20,6 +19,9 @@ export default async function handler(req: any, res: any) {
       autoAlertVideo: true,
     });
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || 'Failed to load bot status' });
+    res.status(500).json({
+      error: e?.message || 'Failed to load bot status',
+      stack: e?.stack,
+    });
   }
 }
