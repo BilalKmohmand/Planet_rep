@@ -655,11 +655,13 @@ class DatabaseManager {
       });
     }
 
-    const { data: members } = await supabase
+    const { count: memberCount, error: membersError } = await supabase
       .from('guild_members')
-      .select('count', { count: 'exact', head: true });
-    
-    const { count: memberCount } = members || { count: 0 };
+      .select('*', { count: 'exact', head: true });
+
+    if (membersError) {
+      console.error('[Supabase] getOverviewAnalytics member count error:', membersError);
+    }
 
     return {
       activeVoiceCount,
