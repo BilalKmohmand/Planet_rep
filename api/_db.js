@@ -1,0 +1,436 @@
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+const supabaseKey =
+  process.env.SUPABASE_ANON_KEY ||
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+
+if (!supabaseUrl || !supabaseKey) {
+  throw new Error('Missing Supabase credentials in environment variables');
+}
+
+const supabase = createClient(supabaseUrl, supabaseKey);
+
+export async function getChannels() {
+  const { data: channels, error: channelsError } = await supabase
+    .from('voice_channels')
+    .select('*');
+
+  if (channelsError) {
+    throw new Error(channelsError.message || 'Failed to load voice channels');
+  }
+
+  const { data: activeStates, error: activeError } = await supabase
+    .from('active_states')
+    .select('*');
+
+  if (activeError) {
+    throw new Error(activeError.message || 'Failed to load active states');
+  }
+
+  return (channels || []).map((c) => {
+    const membersInChannel = (activeStates || [])
+      .filter((m) => m.channel_id === c.id)
+      .map((m) => ({
+        userId: m.user_id,
+        username: m.username,
+        userTag: m.user_tag,
+        avatarUrl: m.avatar_url,
+        channelId: m.channel_id,
+        channelName: m.channel_name,
+        guildId: m.guild_id,
+        isVoice: m.is_voice,
+        isVideo: m.is_video,
+        isStreaming: m.is_streaming,
+        selfMute: m.self_mute,
+        selfDeaf: m.self_deaf,
+        voiceStartTime: m.voice_start_time ? new Date(m.voice_start_time).getTime() : null,
+        videoStartTime: m.video_start_time ? new Date(m.video_start_time).getTime() : null,
+        streamStartTime: m.stream_start_time ? new Date(m.stream_start_time).getTime() : null,
+        streamTitle: m.stream_title,
+      }));
+
+    return {
+      id: c.id,
+      name: c.name,
+      members: membersInChannel,
+    };
+  });
+}
+
+export async function getAllActiveStates() {
+  const { data, error } = await supabase.from('active_states').select('*');
+  if (error) throw new Error(error.message || 'Failed to load active states');
+
+  return (data || []).map((m) => ({
+    userId: m.user_id,
+    username: m.username,
+    userTag: m.user_tag,
+    avatarUrl: m.avatar_url,
+    channelId: m.channel_id,
+    channelName: m.channel_name,
+    guildId: m.guild_id,
+    isVoice: m.is_voice,
+    isVideo: m.is_video,
+    isStreaming: m.is_streaming,
+    selfMute: m.self_mute,
+    selfDeaf: m.self_deaf,
+    voiceStartTime: m.voice_start_time ? new Date(m.voice_start_time).getTime() : null,
+    videoStartTime: m.video_start_time ? new Date(m.video_start_time).getTime() : null,
+    streamStartTime: m.stream_start_time ? new Date(m.stream_start_time).getTime() : null,
+    streamTitle: m.stream_title,
+  }));
+}
+
+export async function getAlertLogs(limit = 50) {
+  const { data, error } = await supabase
+    .from('alert_logs')
+    .select('*')
+    .order('timestamp', { ascending: false })
+    .limit(limit);
+
+  if (error) throw new Error(error.message || 'Failed to load alert logs');
+
+  return (data || []).map((log) => ({
+    id: log.id,
+    timestamp: new Date(log.timestamp).getTime(),
+    type: log.type,
+    userId: log.user_id,
+    username: log.username,
+    userTag: log.user_tag,
+    avatarUrl: log.avatar_url,
+    channelName: log.channel_name,
+    message: log.message,
+    durationFormatted: log.duration_formatted,
+  }));
+}
+
+export async function getSessionHistory(filters) {
+  let query = supabase
+    .from('sessions')
+    .select('*', { count: 'exact' })
+    .order('start_time', { ascending: false });
+
+  if (filters?.userId) query = query.eq('user_id', filters.userId);
+  if (filters?.channelId) query = query.eq('channel_id', filters.channelId);
+  if (filters?.activityType && filters.activityType !== 'all') {
+    query = query.eq('activity_type', filters.activityType);
+  }
+
+  const offset = filters?.offset || 0;
+  const limit = filters?.limit || 50;
+
+  query = query.range(offset, offset + limit - 1);
+
+  const { data, error, count } = await query;
+  if (error) throw new Error(error.message || 'Failed to load sessions');
+
+  const sessions = (data || []).map((s) => ({
+    id: s.id,
+    userId: s.user_id,
+    username: s.username,
+    userTag: s.user_tag,
+    avatarUrl: s.avatar_url,
+    guildId: s.guild_id,
+    guildName: s.guild_name,
+    channelId: s.channel_id,
+    channelName: s.channel_name,
+    activityType: s.activity_type,
+    startTime: new Date(s.start_time).getTime(),
+    endTime: s.end_time ? new Date(s.end_time).getTime() : null,
+    durationSeconds: s.duration_seconds,
+    isOngoing: s.is_ongoing,
+    metadata: s.metadata,
+  }));
+
+  const total = count || 0;
+  return { sessions, total, hasMore: offset + limit < total };
+}
+
+export async function getUserStats(userId, timeframe = 'all') {
+  const now = new Date();
+  let minDate = null;
+
+  if (timeframe === 'daily') minDate = new Date(now.getTime() - 24 * 3600 * 1000);
+  else if (timeframe === 'weekly') minDate = new Date(now.getTime() - 7 * 24 * 3600 * 1000);
+  else if (timeframe === 'monthly') minDate = new Date(now.getTime() - 30 * 24 * 3600 * 1000);
+
+  let query = supabase.from('sessions').select('*').eq('user_id', userId);
+  if (minDate) query = query.gte('start_time', minDate.toISOString());
+
+  const { data: sessions, error: sessionsError } = await query;
+  if (sessionsError) throw new Error(sessionsError.message || 'Failed to load user sessions');
+
+  let voiceSec = 0;
+  let videoSec = 0;
+  let streamSec = 0;
+
+  (sessions || []).forEach((s) => {
+    if (s.activity_type === 'voice') voiceSec += s.duration_seconds;
+    if (s.activity_type === 'video') videoSec += s.duration_seconds;
+    if (s.activity_type === 'stream') streamSec += s.duration_seconds;
+  });
+
+  const { data: active } = await supabase
+    .from('active_states')
+    .select('*')
+    .eq('user_id', userId)
+    .single();
+
+  if (active) {
+    const nowMs = now.getTime();
+    if (active.is_voice && active.voice_start_time) {
+      voiceSec += Math.floor((nowMs - new Date(active.voice_start_time).getTime()) / 1000);
+    }
+    if (active.is_video && active.video_start_time) {
+      videoSec += Math.floor((nowMs - new Date(active.video_start_time).getTime()) / 1000);
+    }
+    if (active.is_streaming && active.stream_start_time) {
+      streamSec += Math.floor((nowMs - new Date(active.stream_start_time).getTime()) / 1000);
+    }
+  }
+
+  const { data: member } = await supabase
+    .from('guild_members')
+    .select('*')
+    .eq('user_id', userId)
+    .single();
+
+  const memberData = member || {
+    user_id: userId,
+    username: active?.username || 'Unknown',
+    user_tag: active?.user_tag || `User#${userId}`,
+    avatar_url:
+      active?.avatar_url ||
+      'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=128&h=128&fit=crop&crop=faces',
+  };
+
+  return {
+    user: {
+      userId: memberData.user_id,
+      username: memberData.username,
+      userTag: memberData.user_tag,
+      avatarUrl: memberData.avatar_url,
+    },
+    timeframe,
+    totalVoiceSeconds: voiceSec,
+    totalVideoSeconds: videoSec,
+    totalStreamSeconds: streamSec,
+    totalSeconds: voiceSec + videoSec + streamSec,
+    sessionCount: (sessions || []).length + (active ? 1 : 0),
+    isCurrentlyActive: !!active,
+    currentChannel: active?.channel_name,
+    recentSessions: (sessions || []).slice(0, 10).map((s) => ({
+      id: s.id,
+      userId: s.user_id,
+      username: s.username,
+      userTag: s.user_tag,
+      avatarUrl: s.avatar_url,
+      guildId: s.guild_id,
+      guildName: s.guild_name,
+      channelId: s.channel_id,
+      channelName: s.channel_name,
+      activityType: s.activity_type,
+      startTime: new Date(s.start_time).getTime(),
+      endTime: s.end_time ? new Date(s.end_time).getTime() : null,
+      durationSeconds: s.duration_seconds,
+      isOngoing: s.is_ongoing,
+      metadata: s.metadata,
+    })),
+  };
+}
+
+export async function getLeaderboard(activityType = 'stream', timeframe = 'weekly') {
+  const { data: members, error } = await supabase.from('guild_members').select('*');
+  if (error) throw new Error(error.message || 'Failed to load guild members');
+
+  const results = await Promise.all(
+    (members || []).map(async (m) => {
+      const stats = await getUserStats(m.user_id, timeframe);
+      let score = 0;
+
+      if (activityType === 'stream') score = stats.totalStreamSeconds;
+      else if (activityType === 'video') score = stats.totalVideoSeconds;
+      else if (activityType === 'voice') score = stats.totalVoiceSeconds;
+      else score = stats.totalSeconds;
+
+      return { ...stats, score };
+    })
+  );
+
+  results.sort((a, b) => b.score - a.score);
+  return results;
+}
+
+export async function getInactiveMembers(thresholdDays = 7) {
+  const now = new Date();
+
+  const { data: activeStates, error: activeError } = await supabase
+    .from('active_states')
+    .select('user_id');
+
+  if (activeError) throw new Error(activeError.message || 'Failed to load active state ids');
+
+  const activeUserIds = new Set((activeStates || []).map((a) => a.user_id));
+
+  const { data: members, error: membersError } = await supabase.from('guild_members').select('*');
+  if (membersError) throw new Error(membersError.message || 'Failed to load guild members');
+
+  const summaries = await Promise.all(
+    (members || []).map(async (m) => {
+      const { data: userSessions, error: sessionsError } = await supabase
+        .from('sessions')
+        .select('*')
+        .eq('user_id', m.user_id);
+
+      if (sessionsError) throw new Error(sessionsError.message || 'Failed to load user sessions');
+
+      let lastActive = m.joined_server_at
+        ? new Date(m.joined_server_at).getTime()
+        : now.getTime() - 30 * 86400000;
+
+      let totalVoice = 0;
+      let totalVideo = 0;
+      let totalStream = 0;
+
+      if (userSessions && userSessions.length > 0) {
+        userSessions.forEach((session) => {
+          if (session.end_time) {
+            const endTime = new Date(session.end_time).getTime();
+            if (endTime > lastActive) lastActive = endTime;
+          }
+
+          if (session.activity_type === 'voice') totalVoice += session.duration_seconds;
+          if (session.activity_type === 'video') totalVideo += session.duration_seconds;
+          if (session.activity_type === 'stream') totalStream += session.duration_seconds;
+        });
+      }
+
+      const isActiveNow = activeUserIds.has(m.user_id);
+      if (isActiveNow) lastActive = now.getTime();
+
+      const daysSince = Math.floor((now.getTime() - lastActive) / 86400000);
+
+      const { data: activeState } = await supabase
+        .from('active_states')
+        .select('*')
+        .eq('user_id', m.user_id)
+        .single();
+
+      const currentActivities = [];
+      if (activeState?.is_voice) currentActivities.push('voice');
+      if (activeState?.is_video) currentActivities.push('video');
+      if (activeState?.is_streaming) currentActivities.push('stream');
+
+      return {
+        userId: m.user_id,
+        username: m.username,
+        userTag: m.user_tag,
+        avatarUrl: m.avatar_url,
+        totalVoiceSeconds: totalVoice,
+        totalVideoSeconds: totalVideo,
+        totalStreamSeconds: totalStream,
+        totalSessions: (userSessions || []).length,
+        lastActiveTimestamp: lastActive,
+        isCurrentlyActive: isActiveNow,
+        currentChannelName: activeState?.channel_name,
+        currentActivities,
+        daysSinceLastActive: daysSince,
+      };
+    })
+  );
+
+  const inactiveOnly = summaries.filter(
+    (m) =>
+      !m.isCurrentlyActive &&
+      now.getTime() - m.lastActiveTimestamp >= thresholdDays * 24 * 3600 * 1000
+  );
+
+  inactiveOnly.sort((a, b) => b.daysSinceLastActive - a.daysSinceLastActive);
+
+  return {
+    thresholdDays,
+    totalGuildMembers: (members || []).length,
+    inactiveCount: inactiveOnly.length,
+    inactiveMembers: inactiveOnly,
+    allMembers: summaries,
+  };
+}
+
+export async function getOverviewAnalytics() {
+  const now = new Date();
+
+  const { data: activeStates, error: activeError } = await supabase
+    .from('active_states')
+    .select('*');
+
+  if (activeError) throw new Error(activeError.message || 'Failed to load active states');
+
+  const activeVoiceCount = (activeStates || []).length;
+  const activeVideoCount = (activeStates || []).filter((s) => s.is_video).length;
+  const activeStreamCount = (activeStates || []).filter((s) => s.is_streaming).length;
+
+  const { data: sessions, error: sessionsError } = await supabase.from('sessions').select('*');
+  if (sessionsError) throw new Error(sessionsError.message || 'Failed to load sessions');
+
+  let totalVoiceSec = 0;
+  let totalVideoSec = 0;
+  let totalStreamSec = 0;
+
+  (sessions || []).forEach((s) => {
+    if (s.activity_type === 'voice') totalVoiceSec += s.duration_seconds;
+    if (s.activity_type === 'video') totalVideoSec += s.duration_seconds;
+    if (s.activity_type === 'stream') totalStreamSec += s.duration_seconds;
+  });
+
+  const dailyBreakdown = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(now.getTime() - i * 86400000);
+    const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).toISOString();
+    const dayEnd = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).toISOString();
+
+    const { data: daySessions, error: dayError } = await supabase
+      .from('sessions')
+      .select('*')
+      .gte('start_time', dayStart)
+      .lt('start_time', dayEnd);
+
+    if (dayError) throw new Error(dayError.message || 'Failed to load daily sessions');
+
+    let vH = 0;
+    let vidH = 0;
+    let sH = 0;
+
+    (daySessions || []).forEach((s) => {
+      if (s.activity_type === 'voice') vH += s.duration_seconds / 3600;
+      if (s.activity_type === 'video') vidH += s.duration_seconds / 3600;
+      if (s.activity_type === 'stream') sH += s.duration_seconds / 3600;
+    });
+
+    dailyBreakdown.push({
+      date: dateStr,
+      voiceHours: Number(vH.toFixed(1)),
+      videoHours: Number(vidH.toFixed(1)),
+      streamHours: Number(sH.toFixed(1)),
+    });
+  }
+
+  const { count: memberCount } = await supabase
+    .from('guild_members')
+    .select('*', { count: 'exact', head: true });
+
+  return {
+    activeVoiceCount,
+    activeVideoCount,
+    activeStreamCount,
+    totalSessionsCount: (sessions || []).length,
+    totalGuildMembersCount: memberCount || 0,
+    totalVoiceHours: Number((totalVoiceSec / 3600).toFixed(1)),
+    totalVideoHours: Number((totalVideoSec / 3600).toFixed(1)),
+    totalStreamHours: Number((totalStreamSec / 3600).toFixed(1)),
+    dailyBreakdown,
+    channels: await getChannels(),
+  };
+}

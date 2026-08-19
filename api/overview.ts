@@ -1,12 +1,10 @@
+import { getOverviewAnalytics } from './_db.js';
+
 export default async function handler(req: any, res: any) {
   try {
-    const { db } = await import('../server/db');
-    const data = await db.getOverviewAnalytics();
+    const data = await getOverviewAnalytics();
     res.status(200).json(data);
   } catch (e: any) {
-    res.status(500).json({
-      error: e?.message || 'Failed to load overview',
-      stack: e?.stack,
-    });
+    res.status(500).json({ error: e?.message || 'Failed to load overview' });
   }
 }
