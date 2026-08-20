@@ -92,9 +92,16 @@ class DatabaseManager {
       return [];
     }
     
-    const { data: activeStates } = await supabase
+    const guildIdFilter = process.env.DISCORD_GUILD_ID;
+    let activeStatesQuery = supabase
       .from('active_states')
       .select('*');
+
+    if (guildIdFilter) {
+      activeStatesQuery = activeStatesQuery.eq('guild_id', guildIdFilter);
+    }
+
+    const { data: activeStates } = await activeStatesQuery;
     
     return (channels || []).map(c => {
       const membersInChannel = (activeStates || []).filter((m: any) => m.channel_id === c.id).map((m: any) => ({
@@ -110,7 +117,7 @@ class DatabaseManager {
         isStreaming: m.is_streaming,
         selfMute: m.self_mute,
         selfDeaf: m.self_deaf,
-        voiceStartTime: m.voice_start_time ? new Date(m.voice_start_time).getTime() : null,
+        voiceStartTime: m.voice_start_time ? new Date(m.voice_start_time).getTime() : Date.now(),
         videoStartTime: m.video_start_time ? new Date(m.video_start_time).getTime() : null,
         streamStartTime: m.stream_start_time ? new Date(m.stream_start_time).getTime() : null,
         streamTitle: m.stream_title,
@@ -156,7 +163,7 @@ class DatabaseManager {
       isStreaming: data.is_streaming,
       selfMute: data.self_mute,
       selfDeaf: data.self_deaf,
-      voiceStartTime: data.voice_start_time ? new Date(data.voice_start_time).getTime() : null,
+      voiceStartTime: data.voice_start_time ? new Date(data.voice_start_time).getTime() : Date.now(),
       videoStartTime: data.video_start_time ? new Date(data.video_start_time).getTime() : null,
       streamStartTime: data.stream_start_time ? new Date(data.stream_start_time).getTime() : null,
       streamTitle: data.stream_title,
@@ -164,9 +171,16 @@ class DatabaseManager {
   }
 
   public async getAllActiveStates(): Promise<ActiveMemberState[]> {
-    const { data, error } = await supabase
+    const guildIdFilter = process.env.DISCORD_GUILD_ID;
+    let query = supabase
       .from('active_states')
       .select('*');
+
+    if (guildIdFilter) {
+      query = query.eq('guild_id', guildIdFilter);
+    }
+
+    const { data, error } = await query;
     
     if (error) {
       console.error('[Supabase] getAllActiveStates error:', error);
@@ -186,7 +200,7 @@ class DatabaseManager {
       isStreaming: m.is_streaming,
       selfMute: m.self_mute,
       selfDeaf: m.self_deaf,
-      voiceStartTime: m.voice_start_time ? new Date(m.voice_start_time).getTime() : null,
+      voiceStartTime: m.voice_start_time ? new Date(m.voice_start_time).getTime() : Date.now(),
       videoStartTime: m.video_start_time ? new Date(m.video_start_time).getTime() : null,
       streamStartTime: m.stream_start_time ? new Date(m.stream_start_time).getTime() : null,
       streamTitle: m.stream_title,
@@ -232,6 +246,15 @@ class DatabaseManager {
     if (error) console.error('[Supabase] removeActiveState error:', error);
   }
 
+  public async clearActiveStatesForGuild(guildId: string) {
+    const { error } = await supabase
+      .from('active_states')
+      .delete()
+      .eq('guild_id', guildId);
+
+    if (error) console.error('[Supabase] clearActiveStatesForGuild error:', error);
+  }
+
   // --- Completed Sessions ---
   public async addCompletedSession(session: MemberSession) {
     const { error } = await supabase
@@ -248,7 +271,7 @@ class DatabaseManager {
         channel_name: session.channelName,
         activity_type: session.activityType,
         start_time: new Date(session.startTime).toISOString(),
-        end_time: new Date(session.endTime).toISOString(),
+        end_time: new Date(session.endTime || Date.now()).toISOString(),
         duration_seconds: session.durationSeconds,
         is_ongoing: session.isOngoing,
         metadata: session.metadata || null,
@@ -323,14 +346,27 @@ class DatabaseManager {
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const sevenDaysAgo = new Date(today.getTime() - 6 * 86400000);
 
+    const guildIdFilter = process.env.DISCORD_GUILD_ID;
+
+    let activeStatesQuery = supabase.from('active_states').select('*');
+    if (guildIdFilter) {
+      activeStatesQuery = activeStatesQuery.eq('guild_id', guildIdFilter);
+    }
+
+    let sessionsQuery = supabase
+      .from('sessions')
+      .select('*')
+      .gte('start_time', sevenDaysAgo.toISOString())
+      .order('start_time', { ascending: false });
+
+    if (guildIdFilter) {
+      sessionsQuery = sessionsQuery.eq('guild_id', guildIdFilter);
+    }
+
     // Fetch active states, sessions for last 7 days, members, and channels in parallel
     const [activeStatesRes, sessionsRes, memberCountRes, channels] = await Promise.all([
-      supabase.from('active_states').select('*'),
-      supabase
-        .from('sessions')
-        .select('*')
-        .gte('start_time', sevenDaysAgo.toISOString())
-        .order('start_time', { ascending: false }),
+      activeStatesQuery,
+      sessionsQuery,
       supabase.from('guild_members').select('*', { count: 'exact', head: true }),
       this.getChannels(),
     ]);

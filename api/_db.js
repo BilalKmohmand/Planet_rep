@@ -21,9 +21,11 @@ export async function getChannels() {
     throw new Error(channelsError.message || 'Failed to load voice channels');
   }
 
-  const { data: activeStates, error: activeError } = await supabase
-    .from('active_states')
-    .select('*');
+  const guildIdFilter = process.env.DISCORD_GUILD_ID;
+  let activeQuery = supabase.from('active_states').select('*');
+  if (guildIdFilter) activeQuery = activeQuery.eq('guild_id', guildIdFilter);
+
+  const { data: activeStates, error: activeError } = await activeQuery;
 
   if (activeError) {
     throw new Error(activeError.message || 'Failed to load active states');
@@ -60,7 +62,11 @@ export async function getChannels() {
 }
 
 export async function getAllActiveStates() {
-  const { data, error } = await supabase.from('active_states').select('*');
+  const guildIdFilter = process.env.DISCORD_GUILD_ID;
+  let query = supabase.from('active_states').select('*');
+  if (guildIdFilter) query = query.eq('guild_id', guildIdFilter);
+
+  const { data, error } = await query;
   if (error) throw new Error(error.message || 'Failed to load active states');
 
   return (data || []).map((m) => ({
@@ -353,8 +359,12 @@ export async function getOverviewAnalytics() {
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const sevenDaysAgo = new Date(today.getTime() - 6 * 86400000);
 
+  const guildIdFilter = process.env.DISCORD_GUILD_ID;
+
   const [activeStatesRes, sessionsCountRes, memberCountRes, channels] = await Promise.all([
-    supabase.from('active_states').select('*'),
+    guildIdFilter
+      ? supabase.from('active_states').select('*').eq('guild_id', guildIdFilter)
+      : supabase.from('active_states').select('*'),
     supabase.from('sessions').select('*', { count: 'exact', head: true }),
     supabase.from('guild_members').select('*', { count: 'exact', head: true }),
     getChannels(),

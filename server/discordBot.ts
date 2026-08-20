@@ -47,40 +47,46 @@ export async function initDiscordBot(token?: string) {
       guildCount = c.guilds.cache.size;
       console.log(`[Discord Bot] Logged in as ${c.user.tag}! Monitoring ${guildCount} servers.`);
 
-      // Sync active voice states currently in all guilds on startup (prevents missing members already in voice!)
-      for (const guild of c.guilds.cache.values()) {
-        for (const channel of guild.channels.cache.values()) {
-          if (channel.isVoiceBased()) {
-            await db.addChannel(channel.id, channel.name);
-            for (const member of channel.members.values()) {
-              const voiceState = member.voice;
-              await botEngine.handleVoiceStateUpdate(
-                {
-                  userId: member.id,
-                  username: member.user.username,
-                  userTag: member.user.tag,
-                  avatarUrl: member.user.displayAvatarURL(),
-                  guildId: guild.id,
-                  guildName: guild.name,
-                  channelId: null,
-                },
-                {
-                  userId: member.id,
-                  username: member.user.username,
-                  userTag: member.user.tag,
-                  avatarUrl: member.user.displayAvatarURL(),
-                  guildId: guild.id,
-                  guildName: guild.name,
-                  channelId: channel.id,
-                  channelName: channel.name,
-                  selfMute: !!voiceState.selfMute,
-                  selfDeaf: !!voiceState.selfDeaf,
-                  selfVideo: !!voiceState.selfVideo,
-                  streaming: !!voiceState.streaming,
-                }
-              );
-            }
-          }
+      // Clear stale DB state and re-sync live voice snapshot on startup.
+      // This prevents "ghost" active members when the bot was offline and missed leave events.
+      const targetGuildId = process.env.DISCORD_GUILD_ID;
+      const guildsToSync = targetGuildId
+        ? c.guilds.cache.filter((g) => g.id === targetGuildId)
+        : c.guilds.cache;
+
+      if (targetGuildId && guildsToSync.size === 0) {
+        console.warn(`[Discord Bot] DISCORD_GUILD_ID=${targetGuildId} not found in bot guild cache. Skipping startup sync.`);
+        return;
+      }
+
+      for (const guild of guildsToSync.values()) {
+        await db.clearActiveStatesForGuild(guild.id);
+
+        // Voice states cache is the most direct way to identify who is currently connected.
+        for (const voiceState of guild.voiceStates.cache.values()) {
+          if (!voiceState.channelId || !voiceState.channel) continue;
+          const member = voiceState.member;
+          if (!member || member.user.bot) continue;
+
+          const now = Date.now();
+          await db.addChannel(voiceState.channel.id, voiceState.channel.name);
+          await db.setActiveState({
+            userId: member.id,
+            username: member.user.username,
+            userTag: member.user.tag,
+            avatarUrl: member.user.displayAvatarURL(),
+            channelId: voiceState.channel.id,
+            channelName: voiceState.channel.name,
+            guildId: guild.id,
+            isVoice: true,
+            isVideo: !!voiceState.selfVideo,
+            isStreaming: !!voiceState.streaming,
+            selfMute: !!voiceState.selfMute,
+            selfDeaf: !!voiceState.selfDeaf,
+            voiceStartTime: now,
+            videoStartTime: voiceState.selfVideo ? now : null,
+            streamStartTime: voiceState.streaming ? now : null,
+          });
         }
       }
     });
