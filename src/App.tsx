@@ -6,7 +6,6 @@ import { MembersStatsTab } from './components/MembersStatsTab';
 import { SessionHistoryTab } from './components/SessionHistoryTab';
 import { InactiveTab } from './components/InactiveTab';
 import { SlashCommandsTab } from './components/SlashCommandsTab';
-import { CodeExportTab } from './components/CodeExportTab';
 import {
   BotStatusConfig,
   VoiceChannelData,
@@ -143,9 +142,6 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'export' && (
-          <CodeExportTab />
-        )}
       </main>
 
       {/* Footer */}

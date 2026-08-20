@@ -87,16 +87,26 @@ export async function initDiscordBot(token?: string) {
 
     discordClient.on(Events.VoiceStateUpdate, async (oldState, newState) => {
       const member = newState.member || oldState.member;
-      if (!member || member.user.bot) return;
+      const isBot = !!member?.user?.bot;
+      const username = member?.user?.username || 'unknown';
+      const newChannel = newState.channel?.name || 'none';
+      const oldChannel = oldState.channel?.name || 'none';
+
+      console.log(`[VoiceStateUpdate] ${username} bot=${isBot} | ${oldChannel} -> ${newChannel}`);
+
+      if (!member || member.user.bot) {
+        console.log(`[VoiceStateUpdate] Skipping bot user: ${username}`);
+        return;
+      }
 
       const userId = member.id;
-      const username = member.user.username;
       const userTag = member.user.tag;
       const avatarUrl = member.user.displayAvatarURL();
       const guildId = (newState.guild || oldState.guild).id;
       const guildName = (newState.guild || oldState.guild).name;
 
-      await botEngine.handleVoiceStateUpdate(
+      try {
+        await botEngine.handleVoiceStateUpdate(
         {
           userId,
           username,
@@ -126,6 +136,10 @@ export async function initDiscordBot(token?: string) {
           streaming: !!newState.streaming,
         }
       );
+      console.log(`[VoiceStateUpdate] Processed ${username} successfully`);
+      } catch (error) {
+        console.error(`[VoiceStateUpdate] Error processing ${username}:`, error);
+      }
 
       // Optional: Auto-announce streaming events to a log channel
       const logChannelId = process.env.DISCORD_LOG_CHANNEL_ID;

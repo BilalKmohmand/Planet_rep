@@ -8,7 +8,6 @@ import {
   History,
   Moon,
   Terminal,
-  Code2,
   Activity,
   Sparkles
 } from 'lucide-react';
@@ -34,7 +33,6 @@ export const Navbar: React.FC<NavbarProps> = ({
     { id: 'sessions', label: '04. Session History', icon: History },
     { id: 'inactive', label: '05. Inactive Audit', icon: Moon },
     { id: 'commands', label: '06. Slash Commands', icon: Terminal },
-    { id: 'export', label: '07. Bot Code & Deploy', icon: Code2 },
   ];
 
   return (
