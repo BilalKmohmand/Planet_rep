@@ -64,19 +64,28 @@ export async function initDiscordBot(token?: string) {
 
         // Voice states cache is the most direct way to identify who is currently connected.
         for (const voiceState of guild.voiceStates.cache.values()) {
-          if (!voiceState.channelId || !voiceState.channel) continue;
-          const member = voiceState.member;
+          if (!voiceState.channelId) continue;
+
+          const channel =
+            voiceState.channel ||
+            (await guild.channels.fetch(voiceState.channelId).catch(() => null));
+          if (!channel) continue;
+
+          let member = voiceState.member;
+          if (!member) {
+            member = await guild.members.fetch(voiceState.id).catch(() => null);
+          }
           if (!member || member.user.bot) continue;
 
           const now = Date.now();
-          await db.addChannel(voiceState.channel.id, voiceState.channel.name);
+          await db.addChannel(channel.id, channel.name);
           await db.setActiveState({
             userId: member.id,
             username: member.user.username,
             userTag: member.user.tag,
             avatarUrl: member.user.displayAvatarURL(),
-            channelId: voiceState.channel.id,
-            channelName: voiceState.channel.name,
+            channelId: channel.id,
+            channelName: channel.name,
             guildId: guild.id,
             isVoice: true,
             isVideo: !!voiceState.selfVideo,
@@ -92,7 +101,14 @@ export async function initDiscordBot(token?: string) {
     });
 
     discordClient.on(Events.VoiceStateUpdate, async (oldState, newState) => {
-      const member = newState.member || oldState.member;
+      const guild = newState.guild || oldState.guild;
+      const userId = newState.id || oldState.id;
+
+      let member = newState.member || oldState.member;
+      if (!member) {
+        member = await guild.members.fetch(userId).catch(() => null);
+      }
+
       const isBot = !!member?.user?.bot;
       const username = member?.user?.username || 'unknown';
       const newChannel = newState.channel?.name || 'none';
@@ -100,16 +116,15 @@ export async function initDiscordBot(token?: string) {
 
       console.log(`[VoiceStateUpdate] ${username} bot=${isBot} | ${oldChannel} -> ${newChannel}`);
 
-      if (!member || member.user.bot) {
+      if (isBot) {
         console.log(`[VoiceStateUpdate] Skipping bot user: ${username}`);
         return;
       }
 
-      const userId = member.id;
-      const userTag = member.user.tag;
-      const avatarUrl = member.user.displayAvatarURL();
-      const guildId = (newState.guild || oldState.guild).id;
-      const guildName = (newState.guild || oldState.guild).name;
+      const userTag = member?.user?.tag || 'unknown#0000';
+      const avatarUrl = member?.user ? member.user.displayAvatarURL() : '';
+      const guildId = guild.id;
+      const guildName = guild.name;
 
       try {
         await botEngine.handleVoiceStateUpdate(
@@ -152,7 +167,8 @@ export async function initDiscordBot(token?: string) {
       if (logChannelId && !oldState.streaming && newState.streaming && newState.channel) {
         const targetChannel = newState.guild.channels.cache.get(logChannelId);
         if (targetChannel && targetChannel.isTextBased()) {
-          targetChannel.send(`🔴 **${member.user.username}** started screen sharing in **#${newState.channel.name}**!`);
+          const streamerName = member?.user?.username || username;
+          targetChannel.send(`🔴 **${streamerName}** started screen sharing in **#${newState.channel.name}**!`);
         }
       }
     });
