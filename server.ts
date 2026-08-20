@@ -46,6 +46,37 @@ async function startServer() {
     });
   });
 
+  app.get('/api/bootstrap', async (req, res) => {
+    const discordInfo = getDiscordStatus();
+    const [overview, channels, logs] = await Promise.all([
+      db.getOverviewAnalytics(),
+      db.getChannels(),
+      db.getAlertLogs(25),
+    ]);
+
+    res.json({
+      status: {
+        mode: discordInfo.isConnected ? 'live' : 'simulation',
+        discordConnected: discordInfo.isConnected,
+        botTag: discordInfo.botTag,
+        guildCount: discordInfo.guildCount,
+        activeVoiceCount: overview.activeVoiceCount,
+        activeVideoCount: overview.activeVideoCount,
+        activeStreamCount: overview.activeStreamCount,
+        totalLoggedSessions: overview.totalSessionsCount,
+        totalTrackedMembers: overview.totalGuildMembersCount,
+        uptimeSeconds: process.uptime(),
+        alertChannelName: '#stream-announcements',
+        inactiveThresholdDays: 7,
+        autoAlertStream: true,
+        autoAlertVideo: true,
+      },
+      overview,
+      channels: { channels },
+      alerts: { logs },
+    });
+  });
+
   // Connect live bot via custom token
   app.post('/api/bot/connect', async (req, res) => {
     const { token } = req.body;

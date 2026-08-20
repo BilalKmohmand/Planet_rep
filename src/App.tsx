@@ -21,41 +21,49 @@ export default function App() {
   const [alerts, setAlerts] = useState<AlertLogItem[]>([]);
   const [allMembers, setAllMembers] = useState<GuildMemberSummary[]>([]);
   const [initialSlashCommand, setInitialSlashCommand] = useState<{ command: string; args?: any } | null>(null);
+  const [membersLoadedAt, setMembersLoadedAt] = useState<number>(0);
 
   // Data fetching
   const refreshAllData = useCallback(async () => {
     try {
-      const [statusRes, overviewRes, channelsRes, alertsRes, inactiveRes] = await Promise.all([
-        fetch('/api/bot/status'),
-        fetch('/api/overview'),
-        fetch('/api/channels'),
-        fetch('/api/alerts?limit=25'),
-        fetch('/api/inactive?days=7')
-      ]);
+      const bootstrapRes = await fetch('/api/bootstrap');
+      const bootstrapData = await bootstrapRes.json();
 
-      const [statusData, overviewDataJson, channelsData, alertsData, inactiveData] = await Promise.all([
-        statusRes.json(),
-        overviewRes.json(),
-        channelsRes.json(),
-        alertsRes.json(),
-        inactiveRes.json()
-      ]);
-
-      setStatus(statusData);
-      setOverviewData(overviewDataJson);
-      setChannels(channelsData.channels || []);
-      setAlerts(alertsData.logs || []);
-      setAllMembers(inactiveData.allMembers || []);
+      setStatus(bootstrapData.status || null);
+      setOverviewData(bootstrapData.overview || null);
+      setChannels(bootstrapData.channels?.channels || []);
+      setAlerts(bootstrapData.alerts?.logs || []);
     } catch (err) {
       console.error('Error fetching tracker data:', err);
     }
   }, []);
 
+  const refreshMembersData = useCallback(async () => {
+    try {
+      const inactiveRes = await fetch('/api/inactive?days=7');
+      const inactiveData = await inactiveRes.json();
+      setAllMembers(inactiveData.allMembers || []);
+      setMembersLoadedAt(Date.now());
+    } catch (err) {
+      console.error('Error fetching members data:', err);
+    }
+  }, []);
+
   useEffect(() => {
     refreshAllData();
-    const interval = setInterval(refreshAllData, 3000); // 3-second live poll
+    const interval = setInterval(refreshAllData, 5000);
     return () => clearInterval(interval);
   }, [refreshAllData]);
+
+  useEffect(() => {
+    const shouldLoadMembers = activeTab === 'members' || activeTab === 'inactive' || activeTab === 'commands';
+    if (!shouldLoadMembers) return;
+
+    const isStale = !membersLoadedAt || Date.now() - membersLoadedAt > 60_000;
+    if (isStale) {
+      refreshMembersData();
+    }
+  }, [activeTab, membersLoadedAt, refreshMembersData]);
 
   // Simulator actions
   const handleTriggerQuickAction = async (
