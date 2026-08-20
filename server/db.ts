@@ -318,6 +318,84 @@ class DatabaseManager {
   }
 
   // --- Queries & Stats ---
+  public async getOverviewAnalytics() {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const sevenDaysAgo = new Date(today.getTime() - 6 * 86400000);
+
+    // Fetch active states, sessions for last 7 days, members, and channels in parallel
+    const [activeStatesRes, sessionsRes, memberCountRes, channels] = await Promise.all([
+      supabase.from('active_states').select('*'),
+      supabase
+        .from('sessions')
+        .select('*')
+        .gte('start_time', sevenDaysAgo.toISOString())
+        .order('start_time', { ascending: false }),
+      supabase.from('guild_members').select('*', { count: 'exact', head: true }),
+      this.getChannels(),
+    ]);
+
+    const activeStates = activeStatesRes.data || [];
+    const sessions = sessionsRes.data || [];
+    const memberCount = memberCountRes.count || 0;
+
+    const activeVoiceCount = activeStates.length;
+    const activeVideoCount = activeStates.filter((s: any) => s.is_video).length;
+    const activeStreamCount = activeStates.filter((s: any) => s.is_streaming).length;
+
+    let totalVoiceSec = 0;
+    let totalVideoSec = 0;
+    let totalStreamSec = 0;
+
+    sessions.forEach((s: any) => {
+      if (s.activity_type === 'voice') totalVoiceSec += s.duration_seconds;
+      if (s.activity_type === 'video') totalVideoSec += s.duration_seconds;
+      if (s.activity_type === 'stream') totalStreamSec += s.duration_seconds;
+    });
+
+    // Daily breakdown for the last 7 days chart (in memory)
+    const dailyBreakdown: { date: string; voiceHours: number; videoHours: number; streamHours: number }[] = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(today.getTime() - i * 86400000);
+      const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const dayStart = d.getTime();
+      const dayEnd = dayStart + 86400000;
+
+      let vH = 0;
+      let vidH = 0;
+      let sH = 0;
+
+      sessions.forEach((s: any) => {
+        const sStart = new Date(s.start_time).getTime();
+        if (sStart >= dayStart && sStart < dayEnd) {
+          if (s.activity_type === 'voice') vH += s.duration_seconds / 3600;
+          if (s.activity_type === 'video') vidH += s.duration_seconds / 3600;
+          if (s.activity_type === 'stream') sH += s.duration_seconds / 3600;
+        }
+      });
+
+      dailyBreakdown.push({
+        date: dateStr,
+        voiceHours: Number(vH.toFixed(1)),
+        videoHours: Number(vidH.toFixed(1)),
+        streamHours: Number(sH.toFixed(1)),
+      });
+    }
+
+    return {
+      activeVoiceCount,
+      activeVideoCount,
+      activeStreamCount,
+      totalSessionsCount: sessionsRes.count || sessions.length,
+      totalGuildMembersCount: memberCount,
+      totalVoiceHours: Number((totalVoiceSec / 3600).toFixed(1)),
+      totalVideoHours: Number((totalVideoSec / 3600).toFixed(1)),
+      totalStreamHours: Number((totalStreamSec / 3600).toFixed(1)),
+      dailyBreakdown,
+      channels,
+    };
+  }
+
   public async getSessionHistory(filters: {
     userId?: string;
     channelId?: string;
@@ -515,53 +593,52 @@ class DatabaseManager {
 
   public async getInactiveMembers(thresholdDays = 7) {
     const now = new Date();
-    const thresholdDate = new Date(now.getTime() - thresholdDays * 24 * 3600 * 1000);
-    
-    const { data: activeStates } = await supabase
-      .from('active_states')
-      .select('user_id');
-    
-    const activeUserIds = new Set((activeStates || []).map((a: any) => a.user_id));
-    
-    const { data: members } = await supabase
-      .from('guild_members')
-      .select('*');
 
-    const summaries = await Promise.all((members || []).map(async (m: any) => {
-      // Get ALL sessions for this user
-      const { data: userSessions } = await supabase
-        .from('sessions')
-        .select('*')
-        .eq('user_id', m.user_id);
-      
+    // Fetch members, active states, and all sessions in parallel
+    const [membersRes, activeStatesRes, sessionsRes] = await Promise.all([
+      supabase.from('guild_members').select('*'),
+      supabase.from('active_states').select('*'),
+      supabase.from('sessions').select('*'),
+    ]);
+
+    const members = membersRes.data || [];
+    const activeStates = activeStatesRes.data || [];
+    const sessions = sessionsRes.data || [];
+
+    const activeByUser = new Map<string, any>();
+    activeStates.forEach((a: any) => activeByUser.set(a.user_id, a));
+
+    const sessionsByUser = new Map<string, any[]>();
+    sessions.forEach((s: any) => {
+      const list = sessionsByUser.get(s.user_id) || [];
+      list.push(s);
+      sessionsByUser.set(s.user_id, list);
+    });
+
+    const summaries = members.map((m: any) => {
+      const userSessions = sessionsByUser.get(m.user_id) || [];
+      const activeState = activeByUser.get(m.user_id);
+      const isActiveNow = !!activeState;
+
       let lastActive = m.joined_server_at ? new Date(m.joined_server_at).getTime() : (now.getTime() - 30 * 86400000);
       let totalVoice = 0;
       let totalVideo = 0;
       let totalStream = 0;
 
-      if (userSessions && userSessions.length > 0) {
-        userSessions.forEach((session: any) => {
-          if (session.end_time) {
-            const endTime = new Date(session.end_time).getTime();
-            if (endTime > lastActive) lastActive = endTime;
-          }
-          if (session.activity_type === 'voice') totalVoice += session.duration_seconds;
-          if (session.activity_type === 'video') totalVideo += session.duration_seconds;
-          if (session.activity_type === 'stream') totalStream += session.duration_seconds;
-        });
-      }
+      userSessions.forEach((session: any) => {
+        if (session.end_time) {
+          const endTime = new Date(session.end_time).getTime();
+          if (endTime > lastActive) lastActive = endTime;
+        }
+        if (session.activity_type === 'voice') totalVoice += session.duration_seconds;
+        if (session.activity_type === 'video') totalVideo += session.duration_seconds;
+        if (session.activity_type === 'stream') totalStream += session.duration_seconds;
+      });
 
-      const isActiveNow = activeUserIds.has(m.user_id);
       if (isActiveNow) lastActive = now.getTime();
 
       const daysSince = Math.floor((now.getTime() - lastActive) / 86400000);
 
-      const { data: activeState } = await supabase
-        .from('active_states')
-        .select('*')
-        .eq('user_id', m.user_id)
-        .single();
-      
       const currentActivities: ActivityType[] = [];
       if (activeState?.is_voice) currentActivities.push('voice');
       if (activeState?.is_video) currentActivities.push('video');
@@ -575,105 +652,28 @@ class DatabaseManager {
         totalVoiceSeconds: totalVoice,
         totalVideoSeconds: totalVideo,
         totalStreamSeconds: totalStream,
-        totalSessions: (userSessions || []).length,
+        totalSessions: userSessions.length,
         lastActiveTimestamp: lastActive,
         isCurrentlyActive: isActiveNow,
         currentChannelName: activeState?.channel_name,
         currentActivities,
         daysSinceLastActive: daysSince,
       };
-    }));
+    });
 
+    const thresholdMs = thresholdDays * 24 * 3600 * 1000;
     const inactiveOnly = summaries.filter(
-      m => !m.isCurrentlyActive && (now.getTime() - m.lastActiveTimestamp) >= thresholdDays * 24 * 3600 * 1000
+      m => !m.isCurrentlyActive && (now.getTime() - m.lastActiveTimestamp) >= thresholdMs
     );
 
     inactiveOnly.sort((a, b) => b.daysSinceLastActive - a.daysSinceLastActive);
 
     return {
       thresholdDays,
-      totalGuildMembers: (members || []).length,
+      totalGuildMembers: members.length,
       inactiveCount: inactiveOnly.length,
       inactiveMembers: inactiveOnly,
       allMembers: summaries,
-    };
-  }
-
-  public async getOverviewAnalytics() {
-    const now = new Date();
-    
-    const { data: activeStates } = await supabase
-      .from('active_states')
-      .select('*');
-    
-    const activeVoiceCount = (activeStates || []).length;
-    const activeVideoCount = (activeStates || []).filter((s: any) => s.is_video).length;
-    const activeStreamCount = (activeStates || []).filter((s: any) => s.is_streaming).length;
-
-    const { data: sessions } = await supabase
-      .from('sessions')
-      .select('*');
-    
-    let totalVoiceSec = 0;
-    let totalVideoSec = 0;
-    let totalStreamSec = 0;
-
-    (sessions || []).forEach((s: any) => {
-      if (s.activity_type === 'voice') totalVoiceSec += s.duration_seconds;
-      if (s.activity_type === 'video') totalVideoSec += s.duration_seconds;
-      if (s.activity_type === 'stream') totalStreamSec += s.duration_seconds;
-    });
-
-    // Daily breakdown for the last 7 days chart
-    const dailyBreakdown: { date: string; voiceHours: number; videoHours: number; streamHours: number }[] = [];
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date(now.getTime() - i * 86400000);
-      const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).toISOString();
-      const dayEnd = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).toISOString();
-
-      const { data: daySessions } = await supabase
-        .from('sessions')
-        .select('*')
-        .gte('start_time', dayStart)
-        .lt('start_time', dayEnd);
-      
-      let vH = 0;
-      let vidH = 0;
-      let sH = 0;
-      (daySessions || []).forEach((s: any) => {
-        if (s.activity_type === 'voice') vH += s.duration_seconds / 3600;
-        if (s.activity_type === 'video') vidH += s.duration_seconds / 3600;
-        if (s.activity_type === 'stream') sH += s.duration_seconds / 3600;
-      });
-
-      dailyBreakdown.push({
-        date: dateStr,
-        voiceHours: Number(vH.toFixed(1)),
-        videoHours: Number(vidH.toFixed(1)),
-        streamHours: Number(sH.toFixed(1)),
-      });
-    }
-
-    const { count: memberCount, error: membersError } = await supabase
-      .from('guild_members')
-      .select('*', { count: 'exact', head: true });
-
-    if (membersError) {
-      console.error('[Supabase] getOverviewAnalytics member count error:', membersError);
-    }
-
-    return {
-      activeVoiceCount,
-      activeVideoCount,
-      activeStreamCount,
-      totalSessionsCount: (sessions || []).length,
-      totalGuildMembersCount: memberCount || 0,
-      totalVoiceHours: Number((totalVoiceSec / 3600).toFixed(1)),
-      totalVideoHours: Number((totalVideoSec / 3600).toFixed(1)),
-      totalStreamHours: Number((totalStreamSec / 3600).toFixed(1)),
-      dailyBreakdown,
-      channels: await this.getChannels(),
     };
   }
 }
